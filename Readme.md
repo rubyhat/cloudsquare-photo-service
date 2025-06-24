@@ -12,8 +12,10 @@
 - ✅ Загрузка в S3
 - ✅ Разделение доступа: public / private
 - ✅ Асинхронная публикация задач в Redis (для основного API)
-- ✅ Запуск на Falcon
-- ✅ Аутентификация по JWT access token
+- ✅ JWT аутентификация (access token)
+- ✅ Запуск на Falcon (async server)
+- ✅ REST эндпоинты через Sinatra-модули
+- ✅ Разделение кода на helpers / routes / services
 
 ---
 
@@ -25,8 +27,8 @@
 - MiniMagick (ImageMagick)
 - AWS S3 SDK
 - Redis
-- Sidekiq-compatible job push
 - Dotenv
+- Sidekiq-compatible queue
 
 ---
 
@@ -47,17 +49,23 @@ cp .env.example .env
 
 ```text
 .
-├── app.rb                   # Sinatra-приложение
-├── config.ru                # Точка входа для Falcon
-├── .env.example             # Пример конфигурации
-├── services/
-│   ├── jwt_decoder.rb       # Проверка access_token
-│   ├── image_processor.rb   # Обработка изображений
-│   ├── s3_uploader.rb       # Загрузка в S3
-├── uploader/
-│   └── photo_uploader.rb    # Публикация задач в Redis
+├── app.rb                         # Точка входа Sinatra
+├── config.ru                      # Запуск Falcon
+├── .env.example                   # Пример конфигурации
 ├── config/
-│   └── environment.rb       # CORS + dotenv + rack middlewares
+│   └── environment.rb             # dotenv + CORS + middleware
+├── routes/
+│   ├── upload_route.rb           # POST /upload
+│   └── presigned_url_route.rb    # GET /presigned-url
+├── helpers/
+│   ├── auth_helpers.rb           # JWT аутентификация
+│   └── file_helpers.rb           # Подсчёт размера файлов
+├── services/
+│   ├── jwt_decoder.rb            # Расшифровка access_token
+│   ├── image_processor.rb        # Конвертация и сжатие
+│   └── s3_uploader.rb            # Работа с S3
+├── uploader/
+│   └── photo_uploader.rb         # Публикация задач в Redis
 ```
 
 ---
@@ -67,7 +75,7 @@ cp .env.example .env
 ### 📤 Запрос: `POST /upload`
 
 **URL:**  
-`https://localhost:9292/upload` *(или http://localhost:9292, если отключён TLS)*
+`http://localhost:9292/upload`
 
 **Headers:**
 ```http
@@ -78,7 +86,8 @@ Authorization: Bearer <access_token>
 
 | Ключ         | Тип   | Описание                                     |
 |--------------|--------|----------------------------------------------|
-| property_id  | Text   | UUID объекта недвижимости                    |
+| entity_type  | Text   | Тип сущности, например: property             |
+| entity_id    | Text   | UUID сущности                                |
 | access       | Text   | public / private (по умолчанию public)       |
 | is_main      | Text   | true / false (первая — главная)              |
 | images       | File   | файлы: .jpg, .png, .heic (1–30 файлов)        |
@@ -98,14 +107,24 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 🐳 Запуск через Falcon
+### 🔒 Запрос: `GET /presigned-url?key=...`
 
-```bash
-bundle exec falcon serve
+**Только для доступа к приватным файлам:**
+
+**Headers:**
+```http
+Authorization: Bearer <access_token>
 ```
 
-По умолчанию доступно на:  
-`https://localhost:9292`
+**Пример запроса:**
+```
+GET /presigned-url?key=agency_.../property_.../private/uuid.webp
+```
+
+**Ответ:**
+```json
+{ "url": "https://s3.ps.kz/..." }
+```
 
 ---
 
@@ -113,25 +132,42 @@ bundle exec falcon serve
 
 Смотри [.env.example](./.env.example)
 
----
-
-## 📬 Что происходит при загрузке
-
-1. Авторизация через access_token
-2. Каждое изображение:
-   - Проверяется
-   - Конвертируется в `.webp`
-   - Загружается в S3 по пути:
-     ```
-     agency_<agency_id>/property_<property_id>/<access>/<uuid>.webp
-     ```
-   - Отправляется задача в Redis `queue:photo_worker` для основного Rails API
-3. Возвращается список URL и статусов
+```env
+JWT_SECRET=...
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_REGION=...
+S3_BUCKET=...
+S3_ENDPOINT=https://s3.ps.kz
+REDIS_URL=redis://localhost:6379/0
+```
 
 ---
 
-## 🧩 Связь с Rails backend
+## 🧩 Что происходит при загрузке
 
-Rails API забирает задачи из Redis через `Sidekiq` с queue `photo_worker` и:
-- Создаёт `PropertyPhoto` (или другую сущность)
-- Обрабатывает права, лимиты, и отображение
+1. JWT access_token декодируется и валидируется
+2. Изображения проходят:
+    - валидацию формата и размера
+    - ресайз + преобразование в .webp
+    - загрузку в S3 с нужным уровнем доступа
+3. В Redis (queue:photo_worker) отправляется задача для Rails API
+
+---
+
+## 🤝 Интеграция с Rails backend
+
+Rails API забирает задачи из Redis через Sidekiq:
+- Создаёт `PropertyPhoto` или другую модель
+- Присваивает флаг `is_main`, `position`, `access`
+- Сохраняет URL в базе и отображает на клиенте
+
+---
+
+## 🐳 Запуск через Falcon
+
+```bash
+bundle exec falcon serve
+```
+
+По умолчанию работает на `http://localhost:9292`

@@ -26,7 +26,7 @@ class ImageProcessor
       image.auto_orient
       image.resize "#{MAX_DIMENSION}x#{MAX_DIMENSION}>"
 
-      temp = Tempfile.new(["processed_", ".webp"], binmode: true)
+      temp = Tempfile.new(%w[processed_ .webp], binmode: true)
       image.format 'webp'
       image.quality QUALITY.to_s
       image.write(temp.path)

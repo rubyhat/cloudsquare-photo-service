@@ -119,6 +119,7 @@ GEM
       redis-client (>= 0.22.0)
     redis-client (0.25.0)
       connection_pool
+    rexml (3.4.1)
     ruby2_keywords (0.0.5)
     samovar (2.3.0)
       console (~> 1.0)
@@ -157,6 +158,7 @@ DEPENDENCIES
   mini_magick
   rack-cors
   redis
+  rexml
   sidekiq
   sinatra
   sinatra-contrib
