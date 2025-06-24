@@ -1,26 +1,34 @@
 # frozen_string_literal: true
 
-# S3Uploader — сервис для загрузки и получения доступа к файлам в S3-совместимом хранилище.
-# Поддерживает загрузку public/private файлов и генерацию временных ссылок для приватных объектов.
+# S3Uploader — сервис для загрузки и доступа к изображениям через S3-совместимое хранилище (например, DigitalOcean Spaces, AWS S3).
 #
-# Требует настройки ENV:
-# - S3_ACCESS_KEY
-# - S3_SECRET_KEY
-# - S3_REGION
-# - S3_BUCKET
-# - S3_ENDPOINT (например: https://s3.ps.kz)
+# Поддерживает:
+# - загрузку файлов с уровнем доступа public/private;
+# - генерацию временных ссылок (presigned URLs) для приватных объектов;
+# - возврат публичного URL сразу после загрузки.
+#
+# Ожидаемые переменные окружения:
+# - S3_ACCESS_KEY — ключ доступа
+# - S3_SECRET_KEY — секретный ключ
+# - S3_REGION — регион (например, 'us-east-1')
+# - S3_BUCKET — имя бакета
+# - S3_ENDPOINT — URL-ендпоинт, например: https://s3.ps.kz
 
 require 'aws-sdk-s3'
 require 'securerandom'
 
 class S3Uploader
   class << self
+    ##
     # Загружает файл в S3
     #
-    # @param path [String] локальный путь к файлу
-    # @param key [String] путь в бакете, например: agency_1/property_2/public/photo.webp
-    # @param access [String] "public" или "private"
-    # @return [String] полный URL (для public) или ключ (для private)
+    # @param path [String] Абсолютный путь к локальному файлу
+    # @param key [String] Ключ (путь) в бакете, например: agency_123/property_456/public/file.webp
+    # @param access [String] Уровень доступа: 'public' или 'private' (по умолчанию 'public')
+    #
+    # @return [String] Если public — возвращает полный публичный URL, если private — возвращает только ключ
+    #
+    # @raise [StandardError] при ошибке загрузки
     def upload(path, key, access = 'public')
       acl = access == 'public' ? 'public-read' : 'private'
 
@@ -36,11 +44,13 @@ class S3Uploader
       raise StandardError, "S3 upload failed: #{e.message}"
     end
 
-    # Генерирует временную ссылку на приватный объект
+    ##
+    # Генерирует временную (presigned) ссылку для приватного объекта
     #
-    # @param key [String] путь в бакете
-    # @param expires_in [Integer] срок жизни ссылки в секундах (по умолчанию 3600 секунд = 1 час)
-    # @return [String] presigned URL
+    # @param key [String] Ключ файла в бакете
+    # @param expires_in [Integer] Срок действия ссылки в секундах (по умолчанию 3600 секунд = 1 час)
+    #
+    # @return [String] Ссылка для временного доступа
     def presigned_url(key, expires_in: 3600)
       signer = Aws::S3::Presigner.new(client: client)
       signer.presigned_url(:get_object, bucket: bucket, key: key, expires_in: expires_in)
@@ -48,26 +58,33 @@ class S3Uploader
 
     private
 
-    # Возвращает экземпляр клиента S3
+    ##
+    # Возвращает настроенного клиента AWS S3
+    #
+    # @return [Aws::S3::Client]
     def client
       @client ||= Aws::S3::Client.new(
-        access_key_id: ENV['S3_ACCESS_KEY'],
+        access_key_id:     ENV['S3_ACCESS_KEY'],
         secret_access_key: ENV['S3_SECRET_KEY'],
-        region: ENV['S3_REGION'],
-        endpoint: ENV['S3_ENDPOINT'],
-        force_path_style: true
+        region:            ENV['S3_REGION'],
+        endpoint:          ENV['S3_ENDPOINT'],
+        force_path_style:  true
       )
     end
 
+    ##
     # Возвращает имя бакета
+    #
+    # @return [String]
     def bucket
       ENV['S3_BUCKET']
     end
 
-    # Возвращает полный публичный URL
+    ##
+    # Возвращает публичный URL к файлу
     #
-    # @param key [String]
-    # @return [String]
+    # @param key [String] путь внутри бакета
+    # @return [String] абсолютный публичный URL
     def public_url(key)
       "#{ENV['S3_ENDPOINT']}/#{bucket}/#{key}"
     end
