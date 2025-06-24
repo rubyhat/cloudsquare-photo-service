@@ -14,3 +14,7 @@ gem 'dotenv'
 gem 'jwt'
 gem 'falcon'
 gem 'rexml'
+
+group :development do
+  gem 'rerun'
+end
