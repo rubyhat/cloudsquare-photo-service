@@ -113,7 +113,7 @@ class UploadRoute < Sinatra::Base
         { status: 'ok', url: url }
       rescue => e
         logger.error "File upload failed: #{filename}, error: #{e.message}"
-        { status: 'error', error: e.message, file: filename }
+        halt 502, json(status: 'error', error: "Photo job request error: #{e.message}", file: filename)
       end
     end
 

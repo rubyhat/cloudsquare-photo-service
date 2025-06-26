@@ -1,0 +1,15 @@
+services:
+  photo-service:
+    build:
+      context: .
+    container_name: cloudsquares-photo-service
+    env_file:
+      - .env.development
+    ports:
+      - "9292:9292"
+    networks:
+      - cloudsquares-net
+
+networks:
+  cloudsquares-net:
+    external: true
