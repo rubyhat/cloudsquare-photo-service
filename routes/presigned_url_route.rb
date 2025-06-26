@@ -2,65 +2,92 @@
 
 # Sinatra::Base — модуль для создания изолированных маршрутов
 require 'sinatra/base'
-
-# Подключает хелпер для JSON-ответов (метод `json(...)`)
 require 'sinatra/json'
 
-# Вспомогательный модуль авторизации, содержит метод `parse_token`
+# JWT авторизация и S3-загрузки
 require_relative '../helpers/auth_helpers'
-
-# Сервис для работы с S3: загрузка и генерация временных ссылок
 require_relative '../services/s3_uploader'
 
 ##
-# Класс PresignedUrlRoute отвечает за маршрут `GET /presigned-url`,
-# который генерирует временные (presigned) ссылки для приватных файлов в S3-хранилище.
+# PresignedUrlRoute — модуль Sinatra для генерации временных ссылок (presigned URLs)
+# на приватные объекты в S3-хранилище.
 #
-# Используется для безопасного доступа к приватным фотографиям и другим медиа.
+# Используется агентами и сотрудниками агентств для безопасного просмотра приватных медиафайлов.
 #
-# Требуется access-токен с ролью agent/agent_manager/agent_admin.
+# Требует авторизации с ролями: agent, agent_manager, agent_admin.
 #
 class PresignedUrlRoute < Sinatra::Base
-  # Подключаем JSON-хелпер от Sinatra
   helpers Sinatra::JSON
-
-  # Подключаем парсинг JWT-токена из заголовка
   helpers AuthHelpers
+
+  # Перед выполнением каждого запроса — проверка авторизации и прав
+  before do
+    @payload = parse_token
+
+    unless %w[agent agent_manager agent_admin].include?(@payload[:role])
+      halt 403, json(error: 'You do not have permission to view private files')
+    end
+  end
 
   ##
   # GET /presigned-url
   #
-  # Генерирует временную ссылку на приватный объект в S3.
-  # Проверяет наличие токена и наличие прав у пользователя.
+  # Генерирует временную ссылку на один файл.
   #
-  # @query_param key [String] ключ (путь) файла в S3-бакете
-  #
+  # @query_param key [String] Ключ файла в S3 (например: agency_xx/property_yy/private/abc.webp)
   # @return [JSON] { url: "https://..." }
   #
-  # @raise [Sinatra::Halt] 401, 403, 400, 500 в зависимости от ошибки
+  # @response 400 Если отсутствует параметр key
+  # @response 403 Если нет доступа по роли
+  # @response 500 Если не удалось сгенерировать ссылку
   #
   get '/presigned-url' do
-    # Извлекаем и валидируем JWT токен
-    payload = parse_token
-
-    # Разрешаем доступ только авторизованным агентам
-    unless %w[agent agent_manager agent_admin].include?(payload[:role])
-      halt 403, json(error: 'You do not have permission to view private files')
-    end
-
-    # Обязательный query-параметр — ключ файла в S3
     key = params['key']
     halt 400, json(error: 'Missing key parameter') unless key
 
     begin
-      # Генерируем временную ссылку
       url = S3Uploader.presigned_url(key)
-
-      # Отправляем успешный JSON-ответ
       json(url: url)
     rescue => e
       logger.error "Failed to generate presigned URL: #{e.message}"
       halt 500, json(error: 'Could not generate presigned URL')
     end
+  end
+
+  ##
+  # POST /presigned-urls
+  #
+  # Принимает массив ключей и возвращает массив временных ссылок.
+  #
+  # @body_param keys [Array<String>] Ключи файлов в S3
+  # @return [JSON] { results: [{ key: ..., url: ..., status: "ok" }, { key: ..., error: ..., status: "error" }, ...] }
+  #
+  # @response 400 Если тело запроса невалидно или не массив строк
+  # @response 403 Если нет доступа по роли
+  #
+  post '/presigned-urls' do
+    request.body.rewind
+
+    begin
+      body = JSON.parse(request.body.read)
+      keys = body['keys']
+    rescue JSON::ParserError
+      halt 400, json(error: 'Invalid JSON in request body')
+    end
+
+    unless keys.is_a?(Array) && keys.all? { |k| k.is_a?(String) }
+      halt 400, json(error: 'Parameter "keys" must be an array of strings')
+    end
+
+    results = keys.map do |key|
+      begin
+        { key: key, url: S3Uploader.presigned_url(key), status: 'ok' }
+      rescue => e
+        logger.error "Presigned URL generation failed for key=#{key}: #{e.message}"
+        { key: key, error: 'Could not generate URL', status: 'error' }
+      end
+    end
+
+    json results: results
   end
 end

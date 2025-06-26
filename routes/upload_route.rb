@@ -40,7 +40,7 @@ class UploadRoute < Sinatra::Base
   # @form_param entity_id [UUID] ID сущности
   # @form_param images [Array<File>] Массив файлов (1–30)
   # @form_param access [String] public/private
-  # @form_param is_main [Boolean] Флаг "главное фото"
+  # @form_param main_photo_index [Integer] Индекс главного фото (0-основанный)
   #
   # @return [JSON] Результат загрузки по каждому файлу
   #
@@ -56,11 +56,11 @@ class UploadRoute < Sinatra::Base
     end
 
     # Получение параметров
-    files = params['images']
-    entity_type = params['entity_type']&.downcase
-    entity_id = params['entity_id']
-    access = params['access'] || 'public'
-    is_main = params['is_main'] == 'true'
+    files = params[:images]
+    entity_type = params[:entity_type]&.downcase
+    entity_id = params[:entity_id]
+    access = params[:access] || 'public'
+    main_photo_index = params[:main_photo_index]&.to_i
 
     # Проверка наличия обязательных данных
     halt 400, json(error: 'No files provided') unless files
@@ -74,8 +74,11 @@ class UploadRoute < Sinatra::Base
     halt 400, json(error: 'Too many files (max 30)') if files.size > 30
     halt 400, json(error: 'Total size exceeds 100MB') if total_file_size(files) > 100 * 1024 * 1024
 
-    # Обработка и загрузка каждого файла
-    uploads = files.each_with_index.map do |file, index|
+    # Обработка и загрузка всех файлов
+    photo_jobs = []
+    uploads = []
+
+    files.each_with_index do |file, index|
       tempfile = file[:tempfile]
       filename = file[:filename]
 
@@ -94,30 +97,37 @@ class UploadRoute < Sinatra::Base
         # Загрузка в S3
         url = S3Uploader.upload(processed_file.path, s3_path, access)
 
-        # Асинхронная задача в Redis (для Rails API)
-        PhotoUploader.enqueue({
-                                entity_type: entity_type,
-                                entity_id: entity_id,
-                                agency_id: agency_id,
-                                user_id: user_id,
-                                file_url: url,
-                                is_main: is_main && index.zero?, # Только первый файл становится is_main = true
-                                position: index + 1,
-                                access: access
-                              })
+        # Подготовка задачи
+        photo_jobs << {
+          entity_type: entity_type,
+          entity_id: entity_id,
+          agency_id: agency_id,
+          user_id: user_id,
+          file_url: url,
+          is_main: index == main_photo_index,
+          position: index + 1,
+          access: access
+        }
 
         # Удаляем временный файл
         processed_file.unlink
 
         # Успешный результат
-        { status: 'ok', url: url }
+        uploads << { status: 'ok', url: url }
       rescue => e
         logger.error "File upload failed: #{filename}, error: #{e.message}"
-        halt 502, json(status: 'error', error: "Photo job request error: #{e.message}", file: filename)
+        uploads << { status: 'error', error: e.message, file: filename }
       end
     end
 
-    # Ответ: список по каждому файлу
+    # Отправляем все задачи одной пачкой
+    begin
+      PhotoUploader.enqueue(photo_jobs)
+    rescue => e
+      logger.error "PhotoUploader error: #{e.message}"
+      halt 502, json(error: 'Failed to enqueue photo jobs', details: e.message)
+    end
+
     json results: uploads
   end
 end

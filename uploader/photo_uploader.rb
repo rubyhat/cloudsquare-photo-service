@@ -1,38 +1,39 @@
 # frozen_string_literal: true
 
-require 'net/http'
-require 'uri'
-require 'json'
+require "net/http"
+require "json"
 
-class PhotoUploader
-  PHOTO_JOB_URL = ENV.fetch("PHOTO_JOB_URL", "http://cloudsquares-api:3000/api/internal/photo_jobs")
-  AUTH_HEADER = ENV.fetch("PHOTO_JOB_SECRET")
+# PhotoUploader — отправляет задачи на Rails API, который принимает job'ы на создание PropertyPhoto.
+# Все фотографии отправляются в виде массива даже если 1 штука, чтобы избежать ошибок в контроллере.
 
+module PhotoUploader
   class << self
-    ##
-    # Отправляет POST-запрос в основной Rails API
+    # Отправка задач на сервер
     #
-    # @param payload [Hash] данные о фото
-    # @raise [StandardError] если запрос завершился с ошибкой
-    def enqueue(payload)
-      uri = URI.parse(PHOTO_JOB_URL)
+    # @param [Array<Hash>] photo_jobs массив задач на загрузку фотографий
+    # @raise [StandardError] если ответ от API неуспешный
+    def enqueue(photo_jobs)
+      # Убедимся, что мы отправляем массив
+      job_array = photo_jobs.is_a?(Array) ? photo_jobs : [photo_jobs]
 
+      uri = URI.join(ENV["PHOTO_JOB_URL"], "/api/internal/photo_jobs")
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
 
       request = Net::HTTP::Post.new(uri.path, {
         "Content-Type" => "application/json",
-        "X-Auth-Token" => AUTH_HEADER
+        "X-Auth-Token" => ENV["PHOTO_JOB_SECRET"]
       })
-      request.body = payload.to_json
+
+      request.body = { photo_job: job_array }.to_json
 
       response = http.request(request)
 
       unless response.is_a?(Net::HTTPSuccess)
-        raise StandardError, "Photo job POST failed: #{response.code} #{response.body}"
+        raise StandardError, "[PhotoUploader] Failed to enqueue photo jobs: #{response.code} - #{response.body}"
       end
-    rescue => e
-      raise StandardError, "Photo job request error: #{e.message}"
+
+      puts "[PhotoUploader] Successfully sent #{job_array.size} photo job(s) to Rails API"
     end
   end
 end
