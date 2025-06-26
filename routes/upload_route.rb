@@ -56,10 +56,10 @@ class UploadRoute < Sinatra::Base
     end
 
     # Получение параметров
-    files = params[:images]
-    entity_type = params[:entity_type]&.downcase
-    entity_id = params[:entity_id]
-    access = params[:access] || 'public'
+    files = params["images"]
+    entity_type = params["entity_type"]&.downcase
+    entity_id = params["entity_id"]
+    access = params["access"] || 'public'
     main_photo_index = params[:main_photo_index]&.to_i
 
     # Проверка наличия обязательных данных

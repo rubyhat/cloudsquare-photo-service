@@ -16,6 +16,7 @@
 require_relative './config/environment'
 require_relative './routes/upload_route'
 require_relative './routes/presigned_url_route'
+require_relative './routes/delete_photos_route'
 
 class ImageService < Sinatra::Base
   configure do
@@ -37,4 +38,5 @@ class ImageService < Sinatra::Base
   # Подключение маршрутов
   use UploadRoute        # POST /upload
   use PresignedUrlRoute  # GET /presigned-url
+  use DeletePhotosRoute  # DEL /delete-photos
 end

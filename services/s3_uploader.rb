@@ -5,6 +5,7 @@
 # Поддерживает:
 # - загрузку файлов с уровнем доступа public/private;
 # - генерацию временных ссылок (presigned URLs) для приватных объектов;
+# - удаление файлов по ключу;
 # - возврат публичного URL сразу после загрузки.
 #
 # Ожидаемые переменные окружения:
@@ -54,6 +55,26 @@ class S3Uploader
     def presigned_url(key, expires_in: 3600)
       signer = Aws::S3::Presigner.new(client: client)
       signer.presigned_url(:get_object, bucket: bucket, key: key, expires_in: expires_in)
+    end
+
+    ##
+    # Удаляет файл из S3 по ключу
+    #
+    # @param key [String] Ключ файла (например, path/to/file.webp)
+    #
+    # @return [Boolean] true если удаление прошло успешно или файл уже был удалён, false если файл не найден
+    #
+    # @raise [StandardError] при других ошибках удаления
+    def delete(key)
+      client.delete_object(bucket: bucket, key: key)
+      true
+    rescue Aws::S3::Errors::NoSuchKey
+      # Файл уже удалён — это не ошибка, возвращаем false
+      puts "[S3Uploader] File not found for deletion: #{key}"
+      false
+    rescue => e
+      # WARNING: Не ловим конкретные ошибки кроме NoSuchKey — при необходимости добавить retry или логику повторов
+      raise StandardError, "[S3Uploader] Delete failed for #{key}: #{e.class.name} - #{e.message}"
     end
 
     private
